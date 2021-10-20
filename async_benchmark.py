@@ -12,15 +12,18 @@ durations = []
 result = []
 hrefs = []
 
-def get_href(html):
-    try:
-        return html.find('a', {'class': 'teaser-title'})['href']
-    except:
-        return None
 
 def get_urls(content):
     soup = BeautifulSoup(content, 'lxml')
+
+    def get_href(html):
+        try:
+            return html.find('a', {'class': 'teaser-title'})['href']
+        except:
+            return None
+
     hrefs.extend([get_href(x) for x in soup.find_all('div', {'class': 'listing-item'})])
+
 
 def scratch(content):
     html = content.replace('\n', '').replace('\t', '')
@@ -79,7 +82,6 @@ def scratch(content):
                  description, phone, price, price_per_meter, agency]
 
 
-
 def timed(func):
     """
     records approximate durations of function calls
@@ -115,6 +117,7 @@ async def fetch_data_proxy(url, session, proxy):
         response_html = await response.text()
     result.append(scratch(response_html))
     #print(f'Parsed {url}')
+
 
 async def fetch_data(url, session):
     """
