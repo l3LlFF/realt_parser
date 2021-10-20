@@ -1,112 +1,40 @@
-import grequests
-from bs4 import BeautifulSoup
-import pandas as pd
 import time
+import asyncio
+import aiohttp
 import re
 import json
+from bs4 import BeautifulSoup
+import pandas as pd
+from decouple import config
 
-def get_href(html):
-    try:
-        return html.find('a', {'class': 'teaser-title'})['href']
-    except:
-        return None
+NUM_PAGES = config('NUM_PAGES', 2)
+NUM_SEMAPHORES = config('NUM_SEMAPHORES', 5)
+REALT_TYPE = config('REALT_TYPE', 'sale')
+REALT_OBJECT = config('REALT_OBJECT', 'offices')
 
-def fetch(url, session):
+durations = []
+
+def timed(func):
     """
-    asynchronous request
+    records approximate durations of function calls
     """
-    async with session.get(url) as response:
-        response_json = await response.content
-        return SimpleNamespace(**response_json)
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        print(f'{func.__name__:<30} started')
+        result = func(*args, **kwargs)
+        duration = f'{func.__name__:<30} finished in {time.time() - start:.2f} seconds'
+        print(duration)
+        durations.append(duration)
+        return result
+    return wrapper
 
-
-def scratch(content):
-    html = content.text.replace('\n', '').replace('\t', '')
-    soup = BeautifulSoup(html, 'lxml')
-
-    for el in soup.find_all('table'):
-        tr = el.find_all('tr')
-
-        for e in tr:
-            td = e.find_all('td')
-            if len(td) < 2:
-                continue
-            key = td[0].text
-            value = td[1].text
-            if key == 'Район города':
-                district = value
-            elif key == 'Адрес':
-                street = value
-            elif key == 'Вид объекта':
-                object_type = value
-            elif key == 'Площадь':
-                x_area = value
-            elif key == 'Область':
-                region = value
-            elif key == 'Населенный пункт':
-                city = value
-    try:
-        phone = soup.find('div', {'class': 'object-contacts'}).find('strong').text
-    except:
-        phone = ''
-    price_block = soup.find('a', {'data-currency': '840', 'rel': 'tooltip'})
-    if price_block is None:
-        price = ''
-        price_per_meter = ''
-    else:
-        price = price_block['data-price'].replace(' ', '')
-        price_per_meter = price_block['data-price_m2'].replace(' ', '')
-        if price != '':
-            re.match(r'[a-zA-ZА-Яа-я]*([0-9.,]+)', price).group(1)
-        if price_per_meter != '':
-            price_per_meter = re.match(r'([0-9.,]+)', price_per_meter).group()
-    location = soup.find('div', {'id': 'map-center'})
-    if location is None:
-        lon = ''
-        lat = ''
-    else:
-        position_block = json.loads(location['data-center'])['position.']
-        lon = position_block['x']
-        lat = position_block['y']
-    description = str(soup.find('div', {'class': 'top-description'}))
-    try:
-        agency = soup.find('div', {'class': 'agency-info-left'}).find('strong').text
-    except:
-        agency = ""
-    return [lat, lon, district, street, object_type, x_area, region, city,
-                 description, phone, price, price_per_meter, agency]
+def get_proxy(filename):
+    with open(filename, 'r') as f:
+        data = f.read().splitlines()
+        return [x.split(':') for x in data]
 
 
 if __name__ == '__main__':
-    start_time = time.time()
-    N = 150
-    urls = [f'https://realt.by/sale/offices/?page={i}' for i in range(N)]
-    rs = (grequests.get(u) for u in urls)
-    print(f'Finding objects...')
-    finding_objects_time = time.time()
-    responses = grequests.map(rs)
-    responses = [x for x in responses if x is not None]
-    s = []
-    for x in responses:
-        soup = BeautifulSoup(x.text, 'lxml')
-        s.extend([get_href(x) for x in soup.find_all('div', {'class': 'listing-item'})])
-    print(f'Found {len(s)} objects to parse. ({time.time() - finding_objects_time} s.)')
-    print('Parsing...')
-    rs = (grequests.get(u) for u in s)
-    parsing_time = time.time()
-    responses = grequests.map(rs)
-    responses = [x for x in responses if x is not None]
-    print(f"Parsed {len(responses)} objects. ({time.time() - parsing_time} s.)")
+    urls = [f'https://realt.by/{REALT_TYPE}/{REALT_OBJECT}/?page={i}' for i in range(NUM_PAGES)]
+    proxies = get_proxy('proxy.txt')
 
-    # write to file
-    pd.DataFrame([x.text for x in responses], columns = ['html']).to_excel('html.xlsx')
-
-    data = []
-    for x in responses:
-        data.append(scratch(x))
-
-    df = pd.DataFrame(data, columns=['lat', 'lon', 'district', 'streets', 'object_type', 'area',
-                           'region', 'city', 'description', 'phone', 'price', 'prices_per_meter',
-                           'agency'])
-    df.to_excel('temp.xlsx')
-    print(f"--- {time.time() - start_time} seconds ---")
