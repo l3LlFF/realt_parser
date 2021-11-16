@@ -10,6 +10,8 @@ import aiofiles
 import os
 import random
 
+
+
 NUM_PAGES = int(config('NUM_PAGES', 2))
 NUM_SEMAPHORES = int(config('NUM_SEMAPHORES', 5))
 REALT_TYPE = config('REALT_TYPE', 'sale')
@@ -37,7 +39,7 @@ def scratch(content):
             key = td[0].text
             value = td[1].text
             if key == 'Район города':
-                district = value
+                district = td[1].find('a').text
             elif key == 'Адрес':
                 street = value
             elif key == 'Вид объекта':
@@ -71,13 +73,14 @@ def scratch(content):
         position_block = json.loads(location['data-center'])['position.']
         lon = position_block['x']
         lat = position_block['y']
+        point = f"'SRID=4326;POINT ({lon} {lat})'::geometry"
     description = str(soup.find('div', {'class': 'top-description'}))
     try:
         agency = soup.find('div', {'class': 'agency-info-left'}).find('strong').text
     except:
         agency = ""
     images = [x['data-src'] for x in soup.find_all('a', {'class': 'object-gallery-item'})]
-    return [lat, lon, district, street, object_type, x_area, region, city,
+    return [point, district, street, object_type, x_area, region, city,
                  description, phone, price, price_per_meter, agency], images
 
 
@@ -153,24 +156,20 @@ async def fetch_image(url, session, proxy):
     """
     host, port, login, password = proxy
     proxy_auth = aiohttp.BasicAuth(login, password)
-    print(url)
     id, href = url
-
-    async with session.get(href, proxy=f"http://{host}:{port}",
-                           proxy_auth=proxy_auth) as response:
-        if response.status == 200:
-
-            if not os.path.exists(SVDIR):
-                os.makedirs(SVDIR)
-            folder = os.path.join(SVDIR, id)
-            if not os.path.exists(folder):
-                os.makedirs(folder)
-            filename = f"{random.getrandbits(32)}.jpg"
-            sv_path = os.path.join(SVDIR, id, filename)
-            f = await aiofiles.open(sv_path, mode='wb')
-            await f.write(await response.read())
-            await f.close()
-
+    if not os.path.exists(SVDIR):
+        os.makedirs(SVDIR)
+    folder = os.path.join(SVDIR, id)
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+        async with session.get(href, proxy=f"http://{host}:{port}",
+                               proxy_auth=proxy_auth) as response:
+            if response.status == 200:
+                filename = f"{random.getrandbits(32)}.jpg"
+                sv_path = os.path.join(SVDIR, id, filename)
+                f = await aiofiles.open(sv_path, mode='wb')
+                await f.write(await response.read())
+                await f.close()
 
 
 async def gather_tasks(loop, urls, function, proxies, n_semaphores):
@@ -210,21 +209,77 @@ def clear_list(lst):
     return cleared_list
 
 
+def to_database(data):
+
+    urls = f"""postgresql://{config('DB_LOGIN')}:{config('DB_PASSWORD')}@{config('DB_HOST')}:{config('DB_PORT')}/{config('DB_NAME')}"""
+    from sqlalchemy import create_engine
+    engine = create_engine(urls)
+
+    sql = f"""
+        CREATE TABLE public.{config('REALT_TYPE')} (
+        id int8 NULL,
+        way geometry NULL,
+        tags hstore NULL
+        );
+        
+        CREATE INDEX {config('REALT_TYPE')}_y ON public.{config('REALT_TYPE')} USING gist (way);    
+        
+        ALTER TABLE {config('REALT_TYPE')}
+        ADD CONSTRAINT id_{config('REALT_TYPE')} UNIQUE (id);
+    """
+
+    with engine.begin() as conn:
+        try:
+            cursor = conn.execute(sql)
+        except Exception as e:
+            print(e)
+            pass
+    df = data.drop_duplicates(['id'])
+
+    df.loc[:, ('price')] = pd.to_numeric(df['price'].str.replace(',', '.'), errors='coerce')
+    df.loc[:, ('prices_per_meter')] = pd.to_numeric(df['prices_per_meter'].str.replace(',', '.'), errors='coerce')
+    df['area'] = df['area'].str.extractall(r"([0-9.,]+)[^0-9]*$").reset_index(level=1, drop=True)
+    df = df.drop('description', axis=1)
+    df.district = df.district.str.replace("\"", "`")
+    df.agency = df.agency.str.replace("\"", "`")
+    df['category'] = pd.qcut(df['price'], 3, labels=["low", "medium", "high"])
+    df = df[~df['price'].isna()]
+    columns = [x for x in df.columns if x not in ('id', 'way')]
+    values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'{x[0]}=>"{x[1]}"' for x in zip(columns, i[columns]) if not pd.isna(x[1])]))}::hstore)"""
+                       for i in list(df.to_records(index=False))])
+    s = f"""
+    INSERT INTO {config('REALT_TYPE')} (id, way, tags)
+    values {values}
+    ON CONFLICT (id) 
+    DO 
+       UPDATE SET 
+       tags = {config('REALT_TYPE')}.tags || EXCLUDED.tags;"""
+    with engine.begin() as conn:
+        conn.execute(s.replace('%', '%%').replace("'null'", 'null'))
+
+
 if __name__ == '__main__':
     urls = [f'https://realt.by/{REALT_TYPE}/{REALT_OBJECT}/?page={i}' for i in range(NUM_PAGES)]
+    print(urls)
     proxies = get_proxy('proxy.txt')
     chunked_urls = chunks(urls, len(urls) // len(proxies))
+    print(f"fetching links")
     async_run(urls=chunked_urls, function=fetch_hrefs,
               proxies=proxies, n_semaphores=NUM_SEMAPHORES)
-    hrefs = clear_list(hrefs)
-    chunked_urls = chunks(hrefs, len(hrefs) // len(proxies))
-    async_run(urls=chunked_urls, function=fetch_data,
-              proxies=proxies, n_semaphores=NUM_SEMAPHORES)
-    result = clear_list(result)
-    chunked_urls = chunks(image_refs, len(image_refs) // len(proxies))
-    async_run(urls=chunked_urls, function=fetch_image,
-              proxies=proxies, n_semaphores=NUM_SEMAPHORES)
+    if len(hrefs) != 0:
+        hrefs = clear_list(hrefs)
+        chunked_urls = chunks(hrefs, len(hrefs) // len(proxies))
+        print(f"fetching realt {config('REALT_TYPE', '')} objects")
+        async_run(urls=chunked_urls, function=fetch_data,
+                  proxies=proxies, n_semaphores=NUM_SEMAPHORES)
+        result = clear_list(result)
+        chunked_urls = chunks(image_refs, len(image_refs) // len(proxies))
+        df = pd.DataFrame(result, columns=['id', 'way', 'district', 'street', 'object_type', 'area',
+                                         'region', 'city', 'description', 'phone', 'price', 'prices_per_meter',
+                                         'agency'])
+        df.to_excel('data.xlsx')
+        to_database(df)
+        print(f"fetching realt {config('REALT_TYPE', '')} images")
+        async_run(urls=chunked_urls, function=fetch_image,
+                  proxies=proxies, n_semaphores=NUM_SEMAPHORES)
 
-    pd.DataFrame(result, columns=['id', 'lat', 'lon', 'district', 'streets', 'object_type', 'area',
-                                     'region', 'city', 'description', 'phone', 'price', 'prices_per_meter',
-                                     'agency']).to_excel(f'result_{REALT_TYPE}.xlsx', index=False)
