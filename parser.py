@@ -14,7 +14,7 @@ import random
 
 NUM_PAGES = int(config('NUM_PAGES', 2))
 NUM_SEMAPHORES = int(config('NUM_SEMAPHORES', 5))
-REALT_TYPE = config('REALT_TYPE', 'sale')
+REALT_TYPE = config('REALT_TYPE', 'sale').split(',')
 REALT_OBJECT = config('REALT_OBJECT', 'offices')
 SVDIR = config('IMAGES_FOLDER', '/')
 
@@ -209,31 +209,39 @@ def clear_list(lst):
     return cleared_list
 
 
-def to_database(data):
+def to_database(data, type):
 
     urls = f"""postgresql://{config('DB_LOGIN')}:{config('DB_PASSWORD')}@{config('DB_HOST')}:{config('DB_PORT')}/{config('DB_NAME')}"""
     from sqlalchemy import create_engine
     engine = create_engine(urls)
 
-    sql = f"""
-        CREATE TABLE public.{config('REALT_TYPE')} (
+    sqls = [
+        f"""
+        CREATE TABLE public.{type} (
         id int8 NULL,
         way geometry NULL,
         tags hstore NULL
-        );
-        
-        CREATE INDEX {config('REALT_TYPE')}_y ON public.{config('REALT_TYPE')} USING gist (way);    
-        
-        ALTER TABLE {config('REALT_TYPE')}
-        ADD CONSTRAINT id_{config('REALT_TYPE')} UNIQUE (id);
-    """
+        );""",
+        f"""
+        CREATE INDEX {type}_y ON public.{type} USING gist (way);    
+        """,
+        f"""
+        ALTER TABLE {type}
+        ADD CONSTRAINT id_{type} UNIQUE (id);
+        """,
+        f"""
+        update {type}
+        set tags = {type}.tags || 'active=>"false"'::hstore
+        """
+        ]
 
-    with engine.begin() as conn:
-        try:
-            cursor = conn.execute(sql)
-        except Exception as e:
-            print(e)
-            pass
+    for sql in sqls:
+        with engine.begin() as conn:
+            try:
+                conn.execute(sql)
+            except Exception as e:
+                print(e)
+                continue
     df = data.drop_duplicates(['id'])
 
     df.loc[:, ('price')] = pd.to_numeric(df['price'].str.replace(',', '.'), errors='coerce')
@@ -248,38 +256,38 @@ def to_database(data):
     values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'{x[0]}=>"{x[1]}"' for x in zip(columns, i[columns]) if not pd.isna(x[1])]))}::hstore)"""
                        for i in list(df.to_records(index=False))])
     s = f"""
-    INSERT INTO {config('REALT_TYPE')} (id, way, tags)
+    INSERT INTO {type} (id, way, tags)
     values {values}
     ON CONFLICT (id) 
     DO 
        UPDATE SET 
-       tags = {config('REALT_TYPE')}.tags || EXCLUDED.tags;"""
+       tags = {type}.tags || EXCLUDED.tags || 'active=>"true"'::hstore;"""
     with engine.begin() as conn:
         conn.execute(s.replace('%', '%%').replace("'null'", 'null'))
 
 
 if __name__ == '__main__':
-    urls = [f'https://realt.by/{REALT_TYPE}/{REALT_OBJECT}/?page={i}' for i in range(NUM_PAGES)]
-    print(urls)
-    proxies = get_proxy('proxy.txt')
-    chunked_urls = chunks(urls, len(urls) // len(proxies))
-    print(f"fetching links")
-    async_run(urls=chunked_urls, function=fetch_hrefs,
-              proxies=proxies, n_semaphores=NUM_SEMAPHORES)
-    if len(hrefs) != 0:
-        hrefs = clear_list(hrefs)
-        chunked_urls = chunks(hrefs, len(hrefs) // len(proxies))
-        print(f"fetching realt {config('REALT_TYPE', '')} objects")
-        async_run(urls=chunked_urls, function=fetch_data,
+    for type in REALT_TYPE:
+        urls = [f'https://realt.by/{type}/{REALT_OBJECT}/?page={i}' for i in range(NUM_PAGES)]
+        print(f"Started {type} objects parsing")
+        proxies = get_proxy('proxy.txt')
+        chunked_urls = chunks(urls, len(urls) // len(proxies))
+        print(f"fetching links")
+        async_run(urls=chunked_urls, function=fetch_hrefs,
                   proxies=proxies, n_semaphores=NUM_SEMAPHORES)
-        result = clear_list(result)
-        chunked_urls = chunks(image_refs, len(image_refs) // len(proxies))
-        df = pd.DataFrame(result, columns=['id', 'way', 'district', 'street', 'object_type', 'area',
-                                         'region', 'city', 'description', 'phone', 'price', 'prices_per_meter',
-                                         'agency'])
-        df.to_excel('data.xlsx')
-        to_database(df)
-        print(f"fetching realt {config('REALT_TYPE', '')} images")
-        async_run(urls=chunked_urls, function=fetch_image,
-                  proxies=proxies, n_semaphores=NUM_SEMAPHORES)
+        if len(hrefs) != 0:
+            hrefs = clear_list(hrefs)
+            chunked_urls = chunks(hrefs, len(hrefs) // len(proxies))
+            print(f"fetching realt {config('REALT_TYPE', '')} objects")
+            async_run(urls=chunked_urls, function=fetch_data,
+                      proxies=proxies, n_semaphores=NUM_SEMAPHORES)
+            result = clear_list(result)
+            chunked_urls = chunks(image_refs, len(image_refs) // len(proxies))
+            df = pd.DataFrame(result, columns=['id', 'way', 'district', 'street', 'object_type', 'area',
+                                             'region', 'city', 'description', 'phone', 'price', 'prices_per_meter',
+                                             'agency'])
+            to_database(df, type)
+            print(f"fetching realt {type} images")
+            async_run(urls=chunked_urls, function=fetch_image,
+                      proxies=proxies, n_semaphores=NUM_SEMAPHORES)
 
