@@ -253,11 +253,11 @@ def to_database(data, type):
     df['category'] = pd.qcut(df['price'], 3, labels=["low", "medium", "high"])
     df = df[~df['price'].isna()]
     columns = [x for x in df.columns if x not in ('id', 'way')]
-    values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'{x[0]}=>"{x[1]}"' for x in zip(columns, i[columns]) if not pd.isna(x[1])]))}::hstore)"""
+    values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'{x[0]}=>"{x[1]}"' for x in zip(columns, i[columns]) if not pd.isna(x[1])]))}::hstore || 'active=>"true"'::hstore)"""
                        for i in list(df.to_records(index=False))])
     s = f"""
     INSERT INTO {type} (id, way, tags)
-    values {values}
+    values {values} 
     ON CONFLICT (id) 
     DO 
        UPDATE SET 
