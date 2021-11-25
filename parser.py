@@ -61,10 +61,14 @@ def scratch(content):
     else:
         price = price_block['data-price'].replace(' ', '')
         price_per_meter = price_block['data-price_m2'].replace(' ', '')
+        if 'м²' in price:
+            price_per_meter = price
+            price = ''
         if price != '':
             price = re.match(r'[a-zA-ZА-Яа-я]*([0-9.,]+)', price).group(1)
         if price_per_meter != '':
             price_per_meter = re.match(r'[a-zA-ZА-Яа-я]*([0-9.,]+)', price_per_meter).group(1)
+
     location = soup.find('div', {'id': 'map-center'})
     if location is None:
         lon = ''
@@ -243,15 +247,19 @@ def to_database(data, type):
                 print(e)
                 continue
     df = data.drop_duplicates(['id'])
+    df = df[~df['price'].isna()]
+    df = df[~df['prices_per_meter'].isna()]
+    df = df[df['price'] != '']
+    df = df[df['prices_per_meter'] != '']
 
     df.loc[:, ('price')] = pd.to_numeric(df['price'].str.replace(',', '.'), errors='coerce')
     df.loc[:, ('prices_per_meter')] = pd.to_numeric(df['prices_per_meter'].str.replace(',', '.'), errors='coerce')
-    df['area'] = df['area'].str.extractall(r"([0-9.,]+)[^0-9]*$").reset_index(level=1, drop=True)
+    df.loc[:, ('area')] = df['area'].str.extractall(r"([0-9.,]+)[^0-9]*$").reset_index(level=1, drop=True)
     df = df.drop('description', axis=1)
     df.district = df.district.str.replace("\"", "`")
     df.agency = df.agency.str.replace("\"", "`")
-    df['category'] = pd.qcut(df['price'], 3, labels=["low", "medium", "high"])
-    df = df[~df['price'].isna()]
+    df.loc[:, ('category')] = pd.qcut(df['prices_per_meter'], 3, labels=["low", "medium", "high"])
+
     columns = [x for x in df.columns if x not in ('id', 'way')]
     values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'{x[0]}=>"{x[1]}"' for x in zip(columns, i[columns]) if not pd.isna(x[1])]))}::hstore || 'active=>"true"'::hstore)"""
                        for i in list(df.to_records(index=False))])
