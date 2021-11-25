@@ -73,6 +73,7 @@ def scratch(content):
     if location is None:
         lon = ''
         lat = ''
+        point = ''
     else:
         position_block = json.loads(location['data-center'])['position.']
         lon = position_block['x']
@@ -250,6 +251,7 @@ def to_database(data, type):
     df = df[~df['price'].isna()]
     df = df[~df['prices_per_meter'].isna()]
     df = df[df['price'] != '']
+    df = df[df['way'] != '']
     df = df[df['prices_per_meter'] != '']
 
     df.loc[:, ('price')] = pd.to_numeric(df['price'].str.replace(',', '.'), errors='coerce')
