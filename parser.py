@@ -39,7 +39,10 @@ def scratch(content):
             key = td[0].text
             value = td[1].text
             if key == 'Район города':
-                district = td[1].find('a').text
+                try:
+                    district = td[1].find('a').text
+                except:
+                    district = ''
             elif key == 'Адрес':
                 street = value
             elif key == 'Вид объекта':
