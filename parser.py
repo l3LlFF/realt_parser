@@ -284,8 +284,8 @@ def to_database():
     df = df.drop('description', axis=1)
     df.district = df.district.str.replace("\"", "`")
     df.agency = df.agency.str.replace("\"", "`")
-    #df.loc[:, ('category')] = pd.qcut(df['prices_per_meter'], 3, labels=["low", "medium", "high"])
-    df['category'] = 1
+    df.loc[:, ('category')] = pd.qcut(df['prices_per_meter'], 3, labels=["low", "medium", "high"])
+
     columns = [x for x in df.columns if x not in ('id', 'way', 'tags')]
     values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'"{x[0]}"=>"{x[1]}"' 
                     for x in zip(columns, i[columns]) if not pd.isna(x[1])]))}::hstore || 'active=>"true"'::hstore)"""
