@@ -321,12 +321,8 @@ if __name__ == '__main__':
                       proxies=proxies, n_semaphores=NUM_SEMAPHORES)
             result = clear_list(result)
             chunked_urls = chunks(image_refs, len(image_refs) // len(proxies))
-            #df = pd.DataFrame(result, columns=['id', 'way', 'district', 'street', 'object_type', 'area',
-            #                                 'region', 'city', 'description', 'phone', 'price', 'prices_per_meter',
-            #                                 'agency', 'tags'])
-            #df.to_excel('123.xlsx')
             to_database()
-            #print(f"fetching realt {type} images")
-            #async_run(urls=chunked_urls, function=fetch_image,
-            #          proxies=proxies, n_semaphores=NUM_SEMAPHORES)
+            print(f"fetching realt {type} images")
+            async_run(urls=chunked_urls, function=fetch_image,
+                      proxies=proxies, n_semaphores=NUM_SEMAPHORES)
 
