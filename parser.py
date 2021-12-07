@@ -25,10 +25,12 @@ result = []
 image_refs = []
 
 
+
 def scratch(content):
     html = content.replace('\n', '').replace('\t', '')
     soup = BeautifulSoup(html, 'lxml')
     district = street = object_type = x_area = region = city = ''
+    tags = []
     for el in soup.find_all('table'):
         tr = el.find_all('tr')
 
@@ -38,6 +40,7 @@ def scratch(content):
                 continue
             key = td[0].text
             value = td[1].text
+            tags.append((key.replace("\"", "`"), value.replace("\"", "`")))
             if key == 'Район города':
                 try:
                     district = td[1].find('a').text
@@ -88,8 +91,21 @@ def scratch(content):
     except:
         agency = ""
     images = [x['data-src'] for x in soup.find_all('a', {'class': 'object-gallery-item'})]
-    return [point, district, street, object_type, x_area, region, city,
-                 description, phone, price, price_per_meter, agency], images
+    tags = [
+        ('way', point),
+        ('district', district),
+        ('street', street),
+        ('object_type', object_type),
+        ('area', x_area),
+        ('region', region),
+        ('city', city),
+        ('description', description),
+        ('phone', phone),
+        ('price', price),
+        ('prices_per_meter', price_per_meter),
+        ('agency', agency)
+    ] + tags
+    return images, tags
 
 
 def chunks(lst, n):
@@ -147,15 +163,15 @@ async def fetch_data(url, session, proxy):
     async with session.get(url, proxy=f"http://{host}:{port}",
                            proxy_auth=proxy_auth) as response:
         response_html = await response.text()
-    res, images = scratch(response_html)
+    images, tags = scratch(response_html)
 
-    if res[0] == '':
+    if tags[0][1] == '':
         result.append(None)
     else:
         id = re.search(r'/([0-9]+)/', url).group(1)
-        res = [id] + res
+        tags = [('id', id)] + tags
         image_refs.extend([(id, url) for url in images if 'realt' in url])
-        result.append(res)
+        result.append(tags)
 
 
 async def fetch_image(url, session, proxy):
@@ -217,7 +233,7 @@ def clear_list(lst):
     return cleared_list
 
 
-def to_database(data, type):
+def to_database():
 
     urls = f"""postgresql://{config('DB_LOGIN')}:{config('DB_PASSWORD')}@{config('DB_HOST')}:{config('DB_PORT')}/{config('DB_NAME')}"""
     from sqlalchemy import create_engine
@@ -248,9 +264,14 @@ def to_database(data, type):
             try:
                 conn.execute(sql)
             except Exception as e:
-                print(e)
+                #print(e)T = {DataFrame: (41, 1)} 0 [id                                                                      1556664] [point                         'SRID=4326;POINT (27.605087 53.917559)'::geometry] [district                                                     Первомайский район] [street ...View as DataFrame
                 continue
-    df = data.drop_duplicates(['id'])
+
+    df = pd.DataFrame()
+    for x in result:
+        df = pd.concat([df, pd.DataFrame({y[0]: [y[1]] for y in x})])
+
+    df = df.drop_duplicates(['id'])
     df = df[~df['price'].isna()]
     df = df[~df['prices_per_meter'].isna()]
     df = df[df['price'] != '']
@@ -263,11 +284,15 @@ def to_database(data, type):
     df = df.drop('description', axis=1)
     df.district = df.district.str.replace("\"", "`")
     df.agency = df.agency.str.replace("\"", "`")
-    df.loc[:, ('category')] = pd.qcut(df['prices_per_meter'], 3, labels=["low", "medium", "high"])
+    #df.loc[:, ('category')] = pd.qcut(df['prices_per_meter'], 3, labels=["low", "medium", "high"])
+    df['category'] = 1
+    columns = [x for x in df.columns if x not in ('id', 'way', 'tags')]
+    values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'"{x[0]}"=>"{x[1]}"' 
+                    for x in zip(columns, i[columns]) if not pd.isna(x[1])]))}::hstore || 'active=>"true"'::hstore)"""
+                    for i in list(df.to_records(index=False))])
 
-    columns = [x for x in df.columns if x not in ('id', 'way')]
-    values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'{x[0]}=>"{x[1]}"' for x in zip(columns, i[columns]) if not pd.isna(x[1])]))}::hstore || 'active=>"true"'::hstore)"""
-                       for i in list(df.to_records(index=False))])
+
+
     s = f"""
     INSERT INTO {type} (id, way, tags)
     values {values} 
@@ -289,18 +314,19 @@ if __name__ == '__main__':
         async_run(urls=chunked_urls, function=fetch_hrefs,
                   proxies=proxies, n_semaphores=NUM_SEMAPHORES)
         if len(hrefs) != 0:
-            hrefs = clear_list(hrefs)
+            hrefs = clear_list(hrefs)[50:55]
             chunked_urls = chunks(hrefs, len(hrefs) // len(proxies))
             print(f"fetching realt {config('REALT_TYPE', '')} objects")
             async_run(urls=chunked_urls, function=fetch_data,
                       proxies=proxies, n_semaphores=NUM_SEMAPHORES)
             result = clear_list(result)
             chunked_urls = chunks(image_refs, len(image_refs) // len(proxies))
-            df = pd.DataFrame(result, columns=['id', 'way', 'district', 'street', 'object_type', 'area',
-                                             'region', 'city', 'description', 'phone', 'price', 'prices_per_meter',
-                                             'agency'])
-            to_database(df, type)
-            print(f"fetching realt {type} images")
-            async_run(urls=chunked_urls, function=fetch_image,
-                      proxies=proxies, n_semaphores=NUM_SEMAPHORES)
+            #df = pd.DataFrame(result, columns=['id', 'way', 'district', 'street', 'object_type', 'area',
+            #                                 'region', 'city', 'description', 'phone', 'price', 'prices_per_meter',
+            #                                 'agency', 'tags'])
+            #df.to_excel('123.xlsx')
+            to_database()
+            #print(f"fetching realt {type} images")
+            #async_run(urls=chunked_urls, function=fetch_image,
+            #          proxies=proxies, n_semaphores=NUM_SEMAPHORES)
 
