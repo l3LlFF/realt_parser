@@ -280,7 +280,8 @@ def to_database():
 
     df.loc[:, ('price')] = pd.to_numeric(df['price'].str.replace(',', '.'), errors='coerce')
     df.loc[:, ('prices_per_meter')] = pd.to_numeric(df['prices_per_meter'].str.replace(',', '.'), errors='coerce')
-    df.loc[:, ('area')] = df['area'].str.extractall(r"([0-9.,]+)[^0-9]*$").reset_index(level=1, drop=True)
+    print(df['area'].str.extractall(r"([0-9.,]+)[^0-9]*$").reset_index(level=1, drop=True))
+    df['area'] = df['area'].str.extractall(r"([0-9.,]+)[^0-9]*$").reset_index(level=1, drop=True)
     df = df.drop('description', axis=1)
     df.district = df.district.str.replace("\"", "`")
     df.agency = df.agency.str.replace("\"", "`")
@@ -314,7 +315,7 @@ if __name__ == '__main__':
         async_run(urls=chunked_urls, function=fetch_hrefs,
                   proxies=proxies, n_semaphores=NUM_SEMAPHORES)
         if len(hrefs) != 0:
-            hrefs = clear_list(hrefs)
+            hrefs = clear_list(hrefs)[:3]
             chunked_urls = chunks(hrefs, len(hrefs) // len(proxies))
             print(f"fetching realt {config('REALT_TYPE', '')} objects")
             async_run(urls=chunked_urls, function=fetch_data,
