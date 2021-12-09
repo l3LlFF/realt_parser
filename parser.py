@@ -87,7 +87,7 @@ def scratch(content):
         point = f"'SRID=4326;POINT ({lon} {lat})'::geometry"
     description = str(soup.find('div', {'class': 'top-description'}))
     try:
-        agency = soup.find('div', {'class': 'agency-info-left'}).find('strong').text
+        agency = soup.find('div', {'class': 'agency-info-left'}).find('strong').text.replace('"', '`')
     except:
         agency = ""
     images = [x['data-src'] for x in soup.find_all('a', {'class': 'object-gallery-item'})]
