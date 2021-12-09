@@ -284,7 +284,11 @@ def to_database():
     df = df.drop('description', axis=1)
     df.district = df.district.str.replace("\"", "`")
     df.agency = df.agency.str.replace("\"", "`")
-    df.loc[:, ('category')] = pd.qcut(df['prices_per_meter'], 3, labels=["low", "medium", "high"])
+    try:
+        df.loc[:, ('category')] = pd.qcut(df['prices_per_meter'], 3, labels=["low", "medium", "high"])
+    except:
+        df['category'] = 1
+    df.loc[:, 'level'] = df['Этаж / этажность'].str.extractall(r"^([0-9]+)[0-9]*").reset_index(level=1, drop=True)
 
     columns = [x for x in df.columns if x not in ('id', 'way', 'tags')]
     values = ','.join([f"""({i['id']}, {i['way']}, {repr(", ".join([f'"{x[0]}"=>"{x[1]}"' 
@@ -314,7 +318,7 @@ if __name__ == '__main__':
         async_run(urls=chunked_urls, function=fetch_hrefs,
                   proxies=proxies, n_semaphores=NUM_SEMAPHORES)
         if len(hrefs) != 0:
-            hrefs = clear_list(hrefs)
+            hrefs = clear_list(hrefs)[:4]
             chunked_urls = chunks(hrefs, len(hrefs) // len(proxies))
             print(f"fetching realt {config('REALT_TYPE', '')} objects")
             async_run(urls=chunked_urls, function=fetch_data,
