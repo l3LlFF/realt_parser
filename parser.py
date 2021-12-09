@@ -318,7 +318,7 @@ if __name__ == '__main__':
         async_run(urls=chunked_urls, function=fetch_hrefs,
                   proxies=proxies, n_semaphores=NUM_SEMAPHORES)
         if len(hrefs) != 0:
-            hrefs = clear_list(hrefs)[:4]
+            hrefs = clear_list(hrefs)
             chunked_urls = chunks(hrefs, len(hrefs) // len(proxies))
             print(f"fetching realt {config('REALT_TYPE', '')} objects")
             async_run(urls=chunked_urls, function=fetch_data,
