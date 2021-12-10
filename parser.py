@@ -264,12 +264,12 @@ def to_database():
             try:
                 conn.execute(sql)
             except Exception as e:
-                #print(e)T = {DataFrame: (41, 1)} 0 [id                                                                      1556664] [point                         'SRID=4326;POINT (27.605087 53.917559)'::geometry] [district                                                     Первомайский район] [street ...View as DataFrame
+
                 continue
 
     df = pd.DataFrame()
     for x in result:
-        df = pd.concat([df, pd.DataFrame({y[0]: [y[1]] for y in x})])
+        df = pd.concat([df, pd.DataFrame({y[0]: [y[1]] for y in x})], ignore_index=True)
 
     df = df.drop_duplicates(['id'])
     df = df[~df['price'].isna()]
